@@ -1350,6 +1350,34 @@ Field value should always be enclosed in double quote marks.
 
 There can be multiple annotations for the same tag.
 
+JSON key rewrite
+----------------
+
+``rewrite=`` renames keys of an inlined JSON object (``%.:json%``) as the
+object is stored. It does not add a constant, and it is not applied to a
+named ``%field:json%`` value or to fields the rule parses itself.
+``annotate=`` is unchanged.
+
+::
+
+    rewrite=<tag>:<source key>=<destination key>[|lower]
+
+The source key is the dotted path the JSON walker already builds
+(``alert.signature_id``, ``src_ip``). One mapping per line. ``|lower``
+ASCII-lowercases a string value. A key with no mapping is not stored.
+A rule with no ``rewrite=`` line stores every key, as before.
+
+The tag has to sit on a rule whose ``%.:json%`` parser is not shared with
+a longer rule. Otherwise the rulebase is rejected: one JSON parser cannot
+carry two different maps.
+
+::
+
+    rewrite=alert:src_ip=source.ip
+    rewrite=alert:proto=network.transport|lower
+    annotate=alert:+event.action="ids_alert"
+    rule=alert:%.:json%
+
 Examples
 --------
 

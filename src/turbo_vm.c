@@ -31,6 +31,7 @@
 #include "turbo_vm.h"
 #include "turbo_vm_opt.h"
 #include "turbo_simd.h"
+#include "rewrite.h"
 /* enum FMT_MODE value FMT_AS_TIMESTAMP_UX_MS; kept in lockstep with parser.c. */
 #define FMT_MODE_TIMESTAMP_UX_MS 3
 #include <string.h>
@@ -1905,6 +1906,7 @@ typedef struct {
 	bool          validate_only;/* when set, the parser only checks that the JSON
 	                             * is well-formed and measures its byte span; it
 	                             * stores no fields */
+	const struct ln_rw_tab *map; /* NULL: store every key under its own name */
 } ln_json_ctx_t;
 
 /*
@@ -2093,6 +2095,88 @@ json_unescape_arena(ln_vm_t *vm, const char *s, size_t n, size_t *out_len)
 	return dst;
 }
 
+static void
+json_ascii_lower(char *s, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		if (s[i] >= 'A' && s[i] <= 'Z')
+			s[i] = (char)(s[i] + 32);
+	}
+}
+
+/*
+ * Resolve the name this leaf is stored under.
+ * Returns 1 and fills key/klen when the leaf is kept, 0 when a rewrite
+ * table drops it (this does not consume a field slot), -1 on arena failure.
+ * With no table the name is the dotted path, as before.
+ */
+static int
+json_take_key(ln_json_ctx_t *c, const char **key, uint16_t *klen, int *lower)
+{
+	const char *src;
+	size_t slen;
+
+	*lower = 0;
+	if (c->map != NULL) {
+		const struct ln_rw_ent *e = ln_rw_lookup(c->map, c->key, c->key_len);
+
+		if (e == NULL)
+			return 0;
+		src = e->dst;
+		slen = e->dlen;
+		*lower = e->lower;
+	} else {
+		src = c->key;
+		slen = c->key_len;
+	}
+	/* A rewrite replaces an existing name in place, so a full result
+	 * can still take the update. The no-map path keeps the old cap. */
+	if (c->map == NULL) {
+		if (c->full)
+			return 0;
+		if (c->vm->result->n_fields >= LN_FAST_MAX_FIELDS) {
+			c->full = true;
+			c->vm->result->flags |= LN_FRESULT_TRUNCATED;
+			return 0;
+		}
+	}
+	if (slen > UINT16_MAX)
+		return 0;
+	*key = ln_arena_strndup(c->vm->arena, src, slen);
+	if (*key == NULL)
+		return -1;
+	*klen = (uint16_t)slen;
+	return 1;
+}
+
+/* Last write wins, matching json_object_object_add on the walker.
+ * Called only when a rewrite table is active. The no-map path appends
+ * and does not scan. The scan is over the fields this message stored,
+ * which a rewrite keeps to the size of the table. */
+static ln_fast_field_t *
+json_rewrite_slot(ln_json_ctx_t *c, const char *name, uint16_t nlen)
+{
+	ln_fast_result_t *r = c->vm->result;
+	int i;
+
+	for (i = (int)r->n_fields - 1; i >= 0; i--) {
+		ln_fast_field_t *f = &r->fields[i];
+
+		if (f->name_len != nlen || f->name == NULL)
+			continue;
+		if (memcmp(f->name, name, nlen) == 0)
+			return f;
+	}
+	if (r->n_fields >= LN_FAST_MAX_FIELDS) {
+		c->full = true;
+		r->flags |= LN_FRESULT_TRUNCATED;
+		return NULL;
+	}
+	return &r->fields[r->n_fields++];
+}
+
 /* Emit a leaf into the flat store. key[]/key_len is the dotted path. */
 static void
 json_emit_string(ln_json_ctx_t *c, const char *raw, size_t raw_len)
@@ -2100,17 +2184,26 @@ json_emit_string(ln_json_ctx_t *c, const char *raw, size_t raw_len)
 	size_t vlen;
 	const char *key;
 	const char *val;
+	uint16_t klen;
+	int lower, took;
+
 	if (c->validate_only) return;
-	if (c->full || c->vm->result == NULL) return;
-	if (c->vm->result->n_fields >= LN_FAST_MAX_FIELDS) {
-		c->full = true;
-		c->vm->result->flags |= LN_FRESULT_TRUNCATED;
+	if (c->vm->result == NULL) return;
+	took = json_take_key(c, &key, &klen, &lower);
+	if (took <= 0) return;
+	val = json_unescape_arena(c->vm, raw, raw_len, &vlen);
+	if (!val) return;
+	if (lower)
+		json_ascii_lower((char *)val, vlen);
+	if (c->map != NULL) {
+		ln_fast_field_t *f = json_rewrite_slot(c, key, klen);
+
+		if (f == NULL) return;
+		ln_fast_store_string(f, key, klen, val, (uint32_t)vlen);
+		c->n_emitted++;
 		return;
 	}
-	key = ln_arena_strndup(c->vm->arena, c->key, c->key_len);
-	val = json_unescape_arena(c->vm, raw, raw_len, &vlen);
-	if (!key || !val) return;
-	if (ln_fast_add_string_static(c->vm->result, key, (uint16_t)c->key_len,
+	if (ln_fast_add_string_static(c->vm->result, key, klen,
 				      val, (uint32_t)vlen) == 0)
 		c->n_emitted++;
 }
@@ -2129,18 +2222,27 @@ json_emit_rawjson(ln_json_ctx_t *c, const char *raw, size_t raw_len)
 {
 	const char *key;
 	const char *val;
+	uint16_t klen;
+	int lower, took;
 
 	if (c->validate_only) return 0;
-	if (c->full || c->vm->result == NULL) return 0;
-	if (c->vm->result->n_fields >= LN_FAST_MAX_FIELDS) {
-		c->full = true;
-		c->vm->result->flags |= LN_FRESULT_TRUNCATED;
+	if (c->vm->result == NULL) return 0;
+	took = json_take_key(c, &key, &klen, &lower);
+	(void)lower;
+	if (took == 0) return 0;          /* unmapped, or the field cap */
+	if (took < 0) return -1;
+	val = ln_arena_strndup(c->vm->arena, raw, raw_len);
+	if (!val) return -1;   /* arena exhausted: caller flattens instead */
+	if (c->map != NULL) {
+		ln_fast_field_t *f = json_rewrite_slot(c, key, klen);
+
+		if (f == NULL) return -1;
+		ln_fast_store_string(f, key, klen, val, (uint32_t)raw_len);
+		f->flags |= LN_FFIELD_RAW_JSON;
+		c->n_emitted++;
 		return 0;
 	}
-	key = ln_arena_strndup(c->vm->arena, c->key, c->key_len);
-	val = ln_arena_strndup(c->vm->arena, raw, raw_len);
-	if (!key || !val) return -1;   /* arena exhausted: caller flattens instead */
-	if (ln_fast_add_rawjson_static(c->vm->result, key, (uint16_t)c->key_len,
+	if (ln_fast_add_rawjson_static(c->vm->result, key, klen,
 				       val, (uint32_t)raw_len) != 0)
 		return -1;
 	c->n_emitted++;
@@ -2151,16 +2253,27 @@ static void
 json_emit_int(ln_json_ctx_t *c, int64_t v)
 {
 	const char *key;
+	uint16_t klen;
+	int lower, took;
+
 	if (c->validate_only) return;
-	if (c->full || c->vm->result == NULL) return;
-	if (c->vm->result->n_fields >= LN_FAST_MAX_FIELDS) {
-		c->full = true;
-		c->vm->result->flags |= LN_FRESULT_TRUNCATED;
+	if (c->vm->result == NULL) return;
+	took = json_take_key(c, &key, &klen, &lower);
+	(void)lower;
+	if (took <= 0) return;
+	if (c->map != NULL) {
+		ln_fast_field_t *f = json_rewrite_slot(c, key, klen);
+
+		if (f == NULL) return;
+		f->name = key;
+		f->name_len = klen;
+		f->type = LN_FTYPE_INT;
+		f->flags = LN_FFIELD_STATIC_NAME | ln_ffield_detect_nested(key, klen);
+		f->v.i = v;
+		c->n_emitted++;
 		return;
 	}
-	key = ln_arena_strndup(c->vm->arena, c->key, c->key_len);
-	if (!key) return;
-	if (ln_fast_add_int_static(c->vm->result, key, (uint16_t)c->key_len, v) == 0)
+	if (ln_fast_add_int_static(c->vm->result, key, klen, v) == 0)
 		c->n_emitted++;
 }
 
@@ -2168,16 +2281,27 @@ static void
 json_emit_double(ln_json_ctx_t *c, double v)
 {
 	const char *key;
+	uint16_t klen;
+	int lower, took;
+
 	if (c->validate_only) return;
-	if (c->full || c->vm->result == NULL) return;
-	if (c->vm->result->n_fields >= LN_FAST_MAX_FIELDS) {
-		c->full = true;
-		c->vm->result->flags |= LN_FRESULT_TRUNCATED;
+	if (c->vm->result == NULL) return;
+	took = json_take_key(c, &key, &klen, &lower);
+	(void)lower;
+	if (took <= 0) return;
+	if (c->map != NULL) {
+		ln_fast_field_t *f = json_rewrite_slot(c, key, klen);
+
+		if (f == NULL) return;
+		f->name = key;
+		f->name_len = klen;
+		f->type = LN_FTYPE_DOUBLE;
+		f->flags = LN_FFIELD_STATIC_NAME | ln_ffield_detect_nested(key, klen);
+		f->v.d = v;
+		c->n_emitted++;
 		return;
 	}
-	key = ln_arena_strndup(c->vm->arena, c->key, c->key_len);
-	if (!key) return;
-	if (ln_fast_add_double_static(c->vm->result, key, (uint16_t)c->key_len, v) == 0)
+	if (ln_fast_add_double_static(c->vm->result, key, klen, v) == 0)
 		c->n_emitted++;
 }
 
@@ -2223,17 +2347,27 @@ static void
 json_emit_bool(ln_json_ctx_t *c, bool v)
 {
 	const char *key;
+	uint16_t klen;
+	int lower, took;
 
 	if (c->validate_only) return;
-	if (c->full || c->vm->result == NULL) return;
-	if (c->vm->result->n_fields >= LN_FAST_MAX_FIELDS) {
-		c->full = true;
-		c->vm->result->flags |= LN_FRESULT_TRUNCATED;
+	if (c->vm->result == NULL) return;
+	took = json_take_key(c, &key, &klen, &lower);
+	(void)lower;
+	if (took <= 0) return;
+	if (c->map != NULL) {
+		ln_fast_field_t *f = json_rewrite_slot(c, key, klen);
+
+		if (f == NULL) return;
+		f->name = key;
+		f->name_len = klen;
+		f->type = LN_FTYPE_BOOL;
+		f->flags = LN_FFIELD_STATIC_NAME | ln_ffield_detect_nested(key, klen);
+		f->v.b = v ? 1 : 0;
+		c->n_emitted++;
 		return;
 	}
-	key = ln_arena_strndup(c->vm->arena, c->key, c->key_len);
-	if (!key) return;
-	if (ln_fast_add_bool_static(c->vm->result, key, (uint16_t)c->key_len, v) == 0)
+	if (ln_fast_add_bool_static(c->vm->result, key, klen, v) == 0)
 		c->n_emitted++;
 }
 
@@ -2243,17 +2377,27 @@ static void
 json_emit_null(ln_json_ctx_t *c)
 {
 	const char *key;
+	uint16_t klen;
+	int lower, took;
 
 	if (c->validate_only) return;
-	if (c->full || c->vm->result == NULL) return;
-	if (c->vm->result->n_fields >= LN_FAST_MAX_FIELDS) {
-		c->full = true;
-		c->vm->result->flags |= LN_FRESULT_TRUNCATED;
+	if (c->vm->result == NULL) return;
+	took = json_take_key(c, &key, &klen, &lower);
+	(void)lower;
+	if (took <= 0) return;
+	if (c->map != NULL) {
+		ln_fast_field_t *f = json_rewrite_slot(c, key, klen);
+
+		if (f == NULL) return;
+		f->name = key;
+		f->name_len = klen;
+		f->type = LN_FTYPE_NULL;
+		f->flags = LN_FFIELD_STATIC_NAME | ln_ffield_detect_nested(key, klen);
+		f->v.i = 0;
+		c->n_emitted++;
 		return;
 	}
-	key = ln_arena_strndup(c->vm->arena, c->key, c->key_len);
-	if (!key) return;
-	if (ln_fast_add_null_static(c->vm->result, key, (uint16_t)c->key_len) == 0)
+	if (ln_fast_add_null_static(c->vm->result, key, klen) == 0)
 		c->n_emitted++;
 }
 
@@ -2523,9 +2667,20 @@ json_parse_value(ln_json_ctx_t *c, int depth)
  * Malformed JSON fails the rule. Returns 0 on success, -1 on parse error.
  * *out_consumed is the byte span of the JSON value.
  */
+static const struct ln_rw_tab *
+vm_rewrite_tab(const ln_vm_t *vm, const ln_instr_t *inst)
+{
+	if (inst->aux == 0 || vm->prog == NULL || vm->prog->rw_tabs == NULL)
+		return NULL;
+	if (inst->aux > vm->prog->n_rw_tabs)
+		return NULL;
+	return &vm->prog->rw_tabs[inst->aux - 1];
+}
+
 static int
 vm_json_flatten(ln_vm_t *vm, const char *field_name,
-		const char *buf, size_t len, size_t *out_consumed)
+		const char *buf, size_t len, size_t *out_consumed,
+		const struct ln_rw_tab *map)
 {
 	ln_json_ctx_t c;
 	uint16_t fn_len;
@@ -2565,6 +2720,7 @@ vm_json_flatten(ln_vm_t *vm, const char *field_name,
 	if (inlined) {
 		/* v1 "." : emit dotted leaves at the current context (root here). */
 		c.validate_only = false;
+		c.map = map;
 		if (json_parse_value(&c, 0) != 0) return -1;
 		json_skip_ws(&c);
 		*out_consumed = c.pos;
@@ -3110,7 +3266,8 @@ vm_exec_instr(ln_vm_t *vm)
 		size_t len;
 
 		/* SIMD-flatten nested JSON into dotted flat keys. */
-		if (vm_json_flatten(vm, name, vm->ip, remaining, &len) != 0)
+		if (vm_json_flatten(vm, name, vm->ip, remaining, &len,
+				    vm_rewrite_tab(vm, inst)) != 0)
 			return -1;
 
 		vm->ip += len;
@@ -4561,7 +4718,7 @@ ln_vm_continue(ln_vm_t *vm)
 		 * On parse failure BACKTRACK restores result->n_fields from the
 		 * fork snapshot, rolling back any partially-emitted leaves. */
 		if (UNLIKELY(vm_json_flatten(vm, turbo_iname(vm, inst, inst->data.str), ip,
-					     REMAINING(), &len) != 0)) {
+					     REMAINING(), &len, vm_rewrite_tab(vm, inst)) != 0)) {
 			WRITEBACK();
 			BACKTRACK();
 		}
@@ -5292,7 +5449,7 @@ ln_vm_continue(ln_vm_t *vm)
 
 		/* SIMD-flatten the CEE JSON body into dotted flat keys. */
 		vm->ip = ip;
-		if (UNLIKELY(vm_json_flatten(vm, fname, p, rem, &json_len) != 0)) {
+		if (UNLIKELY(vm_json_flatten(vm, fname, p, rem, &json_len, NULL) != 0)) {
 			WRITEBACK();
 			BACKTRACK();
 		}

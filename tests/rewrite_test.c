@@ -1,0 +1,477 @@
+/*
+ * rewrite= renames keys of an inlined %.:json% object.
+ *
+ * Each engine has its own document shape and the test locks that shape.
+ * The walker stores a dotted destination as one key ("source.ip"), the same
+ * way it stores %source.ip:word%. Turbo nests it ({"source":{"ip":...}}).
+ * The values must be equal. A check that accepts either shape is not a
+ * parity check: it stays green if an engine switches shape.
+ *
+ * This file is part of the liblognorm project, released under ASL 2.0.
+ */
+#include "config.h"
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "liblognorm.h"
+#include "lognorm.h"
+#include "rewrite.h"
+
+static int failures;
+
+static struct json_object *
+key_of(struct json_object *o, const char *key)
+{
+	struct json_object *v = NULL;
+
+	if (o == NULL || !json_object_object_get_ex(o, key, &v))
+		return NULL;
+	return v;
+}
+
+static const char *
+dump(struct json_object *o)
+{
+	if (o == NULL)
+		return "null";
+	return json_object_to_json_string_ext(o, JSON_C_TO_STRING_PLAIN);
+}
+
+/*
+ * The returned object is only valid until ln_exitCtx(ctx). libfastjson keeps
+ * the field-name pointer the parser passed, and that name is owned by the
+ * context.
+ */
+static struct json_object *
+normalize(ln_ctx *ctx_out, int turbo, const char *rb, const char *msg)
+{
+	ln_ctx ctx;
+	struct json_object *json = NULL;
+
+	*ctx_out = NULL;
+	ctx = ln_initCtx();
+	if (ctx == NULL)
+		return NULL;
+	if (turbo)
+		ln_setCtxOpts(ctx, LN_CTXOPT_TURBO | LN_CTXOPT_TURBO_STRICT);
+	if (ln_loadSamplesFromString(ctx, rb) != 0) {
+		ln_exitCtx(ctx);
+		return NULL;
+	}
+	if (turbo) {
+		char *rendered = NULL;
+		size_t len = 0;
+
+		if (ln_normalize_to_str(ctx, msg, strlen(msg), &rendered, &len) == 0
+		    && rendered != NULL) {
+			json = json_tokener_parse(rendered);
+			free(rendered);
+		}
+	} else if (ln_normalize(ctx, msg, strlen(msg), &json) != 0) {
+		/* A rejected line still carries unparsed-data. Drop the
+		 * object only when that marker is absent. */
+		if (json != NULL && !json_object_object_get_ex(json, "unparsed-data", NULL)) {
+			json_object_put(json);
+			json = NULL;
+		}
+	}
+	*ctx_out = ctx;
+	return json;
+}
+
+static void
+release(ln_ctx ctx, struct json_object *doc)
+{
+	if (doc != NULL)
+		json_object_put(doc);
+	if (ctx != NULL)
+		ln_exitCtx(ctx);
+}
+
+static int
+str_eq(struct json_object *o, const char *value)
+{
+	return o != NULL && json_object_is_type(o, json_type_string)
+		&& strcmp(json_object_get_string(o), value) == 0;
+}
+
+static int
+int_eq(struct json_object *o, int64_t value)
+{
+	return o != NULL && json_object_is_type(o, json_type_int)
+		&& json_object_get_int64(o) == value;
+}
+
+/* Walker: the dotted name is one key. A nested object under the first
+ * segment is the turbo shape and must not be accepted here. */
+static struct json_object *
+walker_leaf(const char *what, struct json_object *doc, const char *dotted)
+{
+	struct json_object *leaf = key_of(doc, dotted);
+	const char *dot = strchr(dotted, '.');
+	char head[128];
+
+	if (leaf == NULL) {
+		printf("FAIL %s/walker: flat key '%s' absent (%s)\n",
+			what, dotted, dump(doc));
+		failures++;
+		return NULL;
+	}
+	if (dot != NULL && (size_t)(dot - dotted) < sizeof(head)) {
+		struct json_object *nested;
+
+		memcpy(head, dotted, (size_t)(dot - dotted));
+		head[dot - dotted] = '\0';
+		nested = key_of(doc, head);
+		if (nested != NULL && json_object_is_type(nested, json_type_object)) {
+			printf("FAIL %s/walker: '%s' is nested, want flat '%s' (%s)\n",
+				what, head, dotted, dump(doc));
+			failures++;
+			return NULL;
+		}
+	}
+	return leaf;
+}
+
+/* Turbo: the dotted name is nested. A flat key of the whole dotted
+ * string is the walker shape and must not be accepted here. */
+static struct json_object *
+turbo_leaf(const char *what, struct json_object *doc, const char *dotted)
+{
+	struct json_object *cur = doc;
+	const char *p = dotted;
+
+	if (key_of(doc, dotted) != NULL && strchr(dotted, '.') != NULL) {
+		printf("FAIL %s/turbo: flat key '%s' present (%s)\n",
+			what, dotted, dump(doc));
+		failures++;
+		return NULL;
+	}
+	while (cur != NULL && *p != '\0') {
+		char key[128];
+		const char *dot = strchr(p, '.');
+		size_t n = dot != NULL ? (size_t)(dot - p) : strlen(p);
+		struct json_object *next;
+
+		if (n == 0 || n >= sizeof(key)) {
+			printf("FAIL %s/turbo: bad path '%s'\n", what, dotted);
+			failures++;
+			return NULL;
+		}
+		memcpy(key, p, n);
+		key[n] = '\0';
+		next = key_of(cur, key);
+		if (next == NULL) {
+			printf("FAIL %s/turbo: missing '%s' in '%s' (%s)\n",
+				what, key, dotted, dump(doc));
+			failures++;
+			return NULL;
+		}
+		cur = next;
+		p = dot != NULL ? dot + 1 : p + n;
+	}
+	return cur;
+}
+
+static void
+same_leaf(const char *what, struct json_object *w, struct json_object *t)
+{
+	if (w == NULL || t == NULL)
+		return;
+	if (json_object_get_type(w) != json_object_get_type(t)
+	    || strcmp(dump(w), dump(t)) != 0) {
+		printf("FAIL %s: walker value %s, turbo value %s\n",
+			what, dump(w), dump(t));
+		failures++;
+	}
+}
+
+static void
+absent(const char *what, int turbo, struct json_object *doc, const char *key)
+{
+	if (key_of(doc, key) != NULL) {
+		printf("FAIL %s/%s: '%s' present (%s)\n",
+			what, turbo ? "turbo" : "walker", key, dump(doc));
+		failures++;
+	}
+}
+
+static void
+pair(const char *what, const char *rb, const char *msg, const char *dotted,
+    int kind, const char *sval, int64_t ival)
+{
+	ln_ctx wc = NULL, tc = NULL;
+	struct json_object *wd, *td, *wl, *tl;
+
+	wd = normalize(&wc, 0, rb, msg);
+	td = normalize(&tc, 1, rb, msg);
+	wl = walker_leaf(what, wd, dotted);
+	tl = turbo_leaf(what, td, dotted);
+	if (kind == 0) {
+		if (wl != NULL && !str_eq(wl, sval)) {
+			printf("FAIL %s/walker: '%s' is %s, want '%s'\n",
+				what, dotted, dump(wl), sval);
+			failures++;
+		}
+		if (tl != NULL && !str_eq(tl, sval)) {
+			printf("FAIL %s/turbo: '%s' is %s, want '%s'\n",
+				what, dotted, dump(tl), sval);
+			failures++;
+		}
+	} else {
+		if (wl != NULL && !int_eq(wl, ival)) {
+			printf("FAIL %s/walker: '%s' is %s, want %lld\n",
+				what, dotted, dump(wl), (long long)ival);
+			failures++;
+		}
+		if (tl != NULL && !int_eq(tl, ival)) {
+			printf("FAIL %s/turbo: '%s' is %s, want %lld\n",
+				what, dotted, dump(tl), (long long)ival);
+			failures++;
+		}
+	}
+	same_leaf(what, wl, tl);
+	release(wc, wd);
+	release(tc, td);
+}
+
+static void
+absent_both(const char *what, const char *rb, const char *msg, const char *key)
+{
+	ln_ctx wc = NULL, tc = NULL;
+	struct json_object *wd, *td;
+
+	wd = normalize(&wc, 0, rb, msg);
+	td = normalize(&tc, 1, rb, msg);
+	absent(what, 0, wd, key);
+	absent(what, 1, td, key);
+	release(wc, wd);
+	release(tc, td);
+}
+
+static void
+expect_unparsed(const char *what, const char *rb, const char *msg)
+{
+	ln_ctx wc = NULL, tc = NULL;
+	struct json_object *wd, *td;
+
+	wd = normalize(&wc, 0, rb, msg);
+	td = normalize(&tc, 1, rb, msg);
+	if (key_of(wd, "unparsed-data") == NULL) {
+		printf("FAIL %s/walker: parsed (%s)\n", what, dump(wd));
+		failures++;
+	}
+	/* Strict turbo reports no match as a NULL document. A document
+	 * without unparsed-data would mean the line was accepted. */
+	if (td != NULL && key_of(td, "unparsed-data") == NULL) {
+		printf("FAIL %s/turbo: parsed (%s)\n", what, dump(td));
+		failures++;
+	}
+	release(wc, wd);
+	release(tc, td);
+}
+
+static void
+expect_load_fail(const char *what, const char *rb)
+{
+	ln_ctx ctx = ln_initCtx();
+
+	if (ctx == NULL) {
+		printf("FAIL %s: no context\n", what);
+		failures++;
+		return;
+	}
+	if (ln_loadSamplesFromString(ctx, rb) == 0) {
+		printf("FAIL %s: rulebase was accepted\n", what);
+		failures++;
+	}
+	ln_exitCtx(ctx);
+}
+
+/* failOnDuplicate is 0 for a normal rule, so two sources that share a
+ * destination overwrite. The reject branch is the merge itself: the
+ * caller passes fail_dup and the existing key is left unchanged. */
+static void
+test_fail_dup(void)
+{
+	struct ln_rw_ent ent;
+	struct ln_rw_tab tab;
+	uint32_t slot[4];
+	struct json_object *dst, *src, *host;
+	int i;
+
+	memset(&ent, 0, sizeof(ent));
+	ent.src = "src_ip";
+	ent.slen = 6;
+	ent.dst = "host";
+	ent.dlen = 4;
+	for (i = 0; i < 4; i++)
+		slot[i] = 1;
+	memset(&tab, 0, sizeof(tab));
+	tab.ents = &ent;
+	tab.n = 1;
+	tab.mask = 3;
+	tab.slot = slot;
+
+	src = json_tokener_parse("{\"src_ip\":\"9.9.9.9\"}");
+	dst = json_object_new_object();
+	json_object_object_add(dst, "host", json_object_new_string("gw"));
+	if (src == NULL || dst == NULL || ln_rewrite_merge(dst, src, &tab, 1) == 0) {
+		printf("FAIL fail-dup: merge accepted a colliding key (%s)\n", dump(dst));
+		failures++;
+	}
+	host = key_of(dst, "host");
+	if (!str_eq(host, "gw")) {
+		printf("FAIL fail-dup: host became %s\n", dump(host));
+		failures++;
+	}
+	if (dst != NULL)
+		json_object_put(dst);
+	if (src != NULL)
+		json_object_put(src);
+}
+
+int
+main(void)
+{
+	static const char *plain =
+		"version=2\n"
+		"rule=:%.:json%\n";
+	static const char *mapped =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip\n"
+		"rewrite=alert:dest_port=destination.port\n"
+		"rewrite=alert:proto=network.transport|lower\n"
+		"rewrite=alert:alert.signature_id=rule.id\n"
+		"annotate=alert:+event.action=\"ids_alert\"\n"
+		"rule=alert:%.:json%\n";
+	static const char *kept_field =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip\n"
+		"rule=alert:%host:word% %.:json%\n";
+	static const char *same_dest =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip\n"
+		"rewrite=alert:client_ip=source.ip\n"
+		"rule=alert:%.:json%\n";
+	static const char *clobber =
+		"version=2\n"
+		"rewrite=alert:src_ip=host\n"
+		"rule=alert:%host:word% %.:json%\n";
+	static const char *bad_mod =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip|upper\n"
+		"rule=alert:%.:json%\n";
+	static const char *twice =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip\n"
+		"rewrite=alert:src_ip=destination.ip\n"
+		"rule=alert:%.:json%\n";
+	static const char *prefix =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip\n"
+		"rule=alert:%.:json%\n"
+		"rule=longer:%.:json% tail\n";
+	static const char *nomatch =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip\n"
+		"rule=alert:%word:word%\n";
+	static const char *array_rb =
+		"version=2\n"
+		"rewrite=alert:src_ip=source.ip\n"
+		"annotate=alert:+event.action=\"ids_alert\"\n"
+		"rule=alert:%.:json%\n";
+	const char *msg =
+		"{\"src_ip\":\"9.9.9.9\",\"dest_port\":22,\"proto\":\"TCP\","
+		"\"alert\":{\"signature_id\":1001},\"junk\":\"no\"}";
+	char *long_msg;
+	size_t i;
+
+	/* No rewrite=: the key stays the JSON key, flat on both engines. */
+	pair("plain-keeps", plain, "{\"src_ip\":\"1.1.1.1\"}", "src_ip",
+		0, "1.1.1.1", 0);
+
+	pair("renamed", mapped, msg, "source.ip", 0, "9.9.9.9", 0);
+	pair("lower", mapped, msg, "network.transport", 0, "tcp", 0);
+	pair("port", mapped, msg, "destination.port", 1, NULL, 22);
+	pair("nested-src", mapped, msg, "rule.id", 1, NULL, 1001);
+	pair("annot", mapped, msg, "event.action", 0, "ids_alert", 0);
+	absent_both("dropped", mapped, msg, "src_ip");
+	absent_both("junk", mapped, msg, "junk");
+	absent_both("raw-alert", mapped, msg, "alert");
+
+	pair("named-field", kept_field,
+		"gw {\"src_ip\":\"8.8.8.8\",\"junk\":1}", "host", 0, "gw", 0);
+	pair("named-renamed", kept_field,
+		"gw {\"src_ip\":\"8.8.8.8\",\"junk\":1}", "source.ip", 0, "8.8.8.8", 0);
+	absent_both("named-junk", kept_field,
+		"gw {\"src_ip\":\"8.8.8.8\",\"junk\":1}", "junk");
+
+	/* Two sources, one destination: last key wins, both engines. */
+	pair("last-wins", same_dest,
+		"{\"src_ip\":\"1.1.1.1\",\"client_ip\":\"2.2.2.2\"}",
+		"source.ip", 0, "2.2.2.2", 0);
+
+	/* A parsed field and a rewritten key share a name. Top-level
+	 * normalize passes failOnDuplicate=0, so the rewritten value
+	 * replaces the parsed one. Both engines must show that value. */
+	pair("clobber", clobber, "gw {\"src_ip\":\"9.9.9.9\"}",
+		"host", 0, "9.9.9.9", 0);
+
+	/* Top-level array: nothing to rename. The array is dropped and
+	 * the annotation remains. The element must not leak as "0" or ".". */
+	pair("array-annot", array_rb, "[\"9.9.9.9\"]",
+		"event.action", 0, "ids_alert", 0);
+	absent_both("array-element", array_rb, "[\"9.9.9.9\"]", "0");
+	absent_both("array-dot", array_rb, "[\"9.9.9.9\"]", ".");
+
+	/* A 512-byte key does not fit the walker path buffer or the turbo
+	 * key buffer. Both engines reject the line. */
+	long_msg = malloc(512 + 16);
+	if (long_msg == NULL)
+		return 1;
+	long_msg[0] = '{';
+	long_msg[1] = '"';
+	for (i = 0; i < 512; i++)
+		long_msg[2 + i] = 'a';
+	memcpy(long_msg + 2 + 512, "\":\"x\"}", 6);
+	long_msg[2 + 512 + 6] = '\0';
+	expect_unparsed("long-key", mapped, long_msg);
+	free(long_msg);
+
+	test_fail_dup();
+
+	/* Length-bounded input with no trailing NUL. The unparsed-data
+	 * path must not strlen() past the buffer. */
+	{
+		ln_ctx ctx = ln_initCtx();
+		struct json_object *json = NULL;
+		char buf[1] = { 'A' };
+
+		if (ctx == NULL || ln_loadSamplesFromString(ctx, plain) != 0) {
+			printf("FAIL unterminated: load\n");
+			failures++;
+		} else {
+			ln_normalize(ctx, buf, 1, &json);
+			if (json == NULL || key_of(json, "unparsed-data") == NULL) {
+				printf("FAIL unterminated: %s\n", dump(json));
+				failures++;
+			}
+		}
+		release(ctx, json);
+	}
+
+	expect_load_fail("bad-modifier", bad_mod);
+	expect_load_fail("conflict", twice);
+	expect_load_fail("shared-prefix", prefix);
+	expect_load_fail("not-json", nomatch);
+
+	if (failures != 0) {
+		printf("%d failure(s)\n", failures);
+		return 1;
+	}
+	printf("rewrite_test: ok\n");
+	return 0;
+}
