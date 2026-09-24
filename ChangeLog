@@ -1,9 +1,11 @@
 ----------------------------------------------------------------------
 unreleased
 - rulebase directive rewrite= renames or drops keys of an inlined
-  %.:json% object while the JSON walker stores them. A rule with no
+  %.:json% object, and keys of a %:name-value-list% field, while
+  they are stored. A rule with no
   rewrite= line is unchanged. |lower ASCII-lowercases a string value.
-  The tag must belong to one unambiguous %.:json% rule.
+  The tag must belong to one unambiguous %.:json% or
+  %:name-value-list% rule.
   See doc/configuration.rst, section "JSON key rewrite".
 
 ----------------------------------------------------------------------

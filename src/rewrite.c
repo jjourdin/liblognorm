@@ -20,6 +20,7 @@
 
 /* Index of "json" in pdag.c parser_lookup_table. turbo.c PRSID_JSON matches. */
 #define LN_PRSID_JSON 21
+#define LN_PRSID_NAMEVALUE 26
 
 struct ln_rw_op {
 	struct ln_rw_op *next;
@@ -129,7 +130,7 @@ find_rule(ln_rewriteSet *rs, const char *tag, size_t n)
 static int
 name_char(unsigned char c)
 {
-	return isalnum(c) || c == '_' || c == '.' || c == '@';
+	return isalnum(c) || c == '_' || c == '.' || c == '@' || c == '-';
 }
 
 static uint32_t
@@ -217,7 +218,7 @@ ln_rewrite_id_for_parser(const struct ln_parser_s *prs)
  *   [space] ['#' comment]
  *
  * tag is letters, digits, '_' or '.'. src and dst are letters, digits,
- * '_', '.' or '@'. Both are required and at most 512 bytes. |lower is
+ * '_', '.', '@' or '-'. Both are required and at most 512 bytes. |lower is
  * the only modifier. Anything else after the destination is rejected.
  *
  * Lines that share a tag form one list. The same source with the same
@@ -614,13 +615,14 @@ bind_node(ln_ctx ctx, struct ln_pdag *n, int depth)
 		struct ln_pdag *term;
 		unsigned id = 0;
 
-		if (prs->prsid == LN_PRSID_JSON && prs->name != NULL
-		    && prs->name[0] == '.' && prs->name[1] == '\0') {
+		if ((prs->prsid == LN_PRSID_JSON && prs->name != NULL
+		     && prs->name[0] == '.' && prs->name[1] == '\0')
+		    || prs->prsid == LN_PRSID_NAMEVALUE) {
 			term = linear_terminal(prs->node);
 			if (term != NULL && term->nparsers != 0
 			    && terminal_has_rewrite(ctx->rewrites, term)) {
 				ln_errprintf(ctx, 0,
-					"rewrite: %%.:json%% rule is a prefix of a longer rule");
+					"rewrite: open-key rule is a prefix of a longer rule");
 				return -1;
 			}
 			if (term != NULL && term->nparsers == 0
@@ -670,7 +672,7 @@ ln_rewrite_bind(ln_ctx ctx)
 			continue;
 		tag = ln_es_str2cstr(&rule->tag);
 		ln_errprintf(ctx, 0,
-			"rewrite tag '%s' is not on an unambiguous %%.:json%% rule",
+			"rewrite tag '%s' is not on one %%.:json%% or %%:name-value-list%% rule",
 			tag != NULL ? tag : "?");
 		return -1;
 	}

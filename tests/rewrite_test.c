@@ -484,6 +484,91 @@ main(void)
 		release(ctx, json);
 	}
 
+	{
+		static const char nv_plain[] = "rule=:%.:name-value-list%\n";
+		static const char nv_mapped[] =
+			"version=2\n"
+			"rewrite=kv:src=source.ip\n"
+			"rewrite=kv:src-ip=source.ip\n"
+			"rewrite=kv:proto=network.transport|lower\n"
+			"rule=kv:%.:name-value-list%\n";
+		static const char nv_last[] =
+			"version=2\n"
+			"rewrite=kv:src=source.ip\n"
+			"rewrite=kv:client=source.ip\n"
+			"rule=kv:%.:name-value-list%\n";
+		const char *nv_msg = "src=203.0.113.7 proto=TCP app=http";
+		ln_ctx wc = NULL, tc = NULL;
+		struct json_object *wd, *td, *wl, *tl;
+
+		wd = normalize(&wc, 0, nv_plain, nv_msg);
+		td = normalize(&tc, 1, nv_plain, nv_msg);
+		wl = walker_leaf("nv-plain", wd, "src");
+		tl = turbo_leaf("nv-plain", td, "src");
+		same_leaf("nv-plain", wl, tl);
+		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
+			printf("FAIL nv-plain %s\n", dump(wl));
+			failures++;
+		}
+		release(wc, wd);
+		release(tc, td);
+
+		wd = normalize(&wc, 0, nv_mapped, nv_msg);
+		td = normalize(&tc, 1, nv_mapped, nv_msg);
+		wl = walker_leaf("nv-src", wd, "source.ip");
+		tl = turbo_leaf("nv-src", td, "source.ip");
+		same_leaf("nv-src", wl, tl);
+		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
+			printf("FAIL nv-src/walker %s\n", dump(wl));
+			failures++;
+		}
+		wl = walker_leaf("nv-proto", wd, "network.transport");
+		tl = turbo_leaf("nv-proto", td, "network.transport");
+		same_leaf("nv-proto", wl, tl);
+		if (wl != NULL && !str_eq(wl, "tcp")) {
+			printf("FAIL nv-proto/walker %s\n", dump(wl));
+			failures++;
+		}
+		if (tl != NULL && !str_eq(tl, "tcp")) {
+			printf("FAIL nv-proto/turbo %s\n", dump(tl));
+			failures++;
+		}
+		absent("nv-drop", 0, wd, "src");
+		absent("nv-drop", 1, td, "src");
+		absent("nv-drop", 0, wd, "app");
+		absent("nv-drop", 1, td, "app");
+		release(wc, wd);
+		release(tc, td);
+
+		wd = normalize(&wc, 0, nv_mapped, "src-ip=198.51.100.9");
+		td = normalize(&tc, 1, nv_mapped, "src-ip=198.51.100.9");
+		wl = walker_leaf("nv-hyphen", wd, "source.ip");
+		tl = turbo_leaf("nv-hyphen", td, "source.ip");
+		same_leaf("nv-hyphen", wl, tl);
+		if (wl != NULL && !str_eq(wl, "198.51.100.9")) {
+			printf("FAIL nv-hyphen %s\n", dump(wl));
+			failures++;
+		}
+		release(wc, wd);
+		release(tc, td);
+
+		wd = normalize(&wc, 0, nv_last, "src=1.1.1.1 client=2.2.2.2");
+		td = normalize(&tc, 1, nv_last, "src=1.1.1.1 client=2.2.2.2");
+		wl = walker_leaf("nv-last", wd, "source.ip");
+		tl = turbo_leaf("nv-last", td, "source.ip");
+		same_leaf("nv-last", wl, tl);
+		if (wl != NULL && !str_eq(wl, "2.2.2.2")) {
+			printf("FAIL nv-last/walker %s\n", dump(wl));
+			failures++;
+		}
+		if (tl != NULL && !str_eq(tl, "2.2.2.2")) {
+			printf("FAIL nv-last/turbo %s\n", dump(tl));
+			failures++;
+		}
+		release(wc, wd);
+		release(tc, td);
+	}
+
 	expect_load_fail("bad-modifier", bad_mod);
 	expect_load_fail("conflict", twice);
 	expect_load_fail("shared-prefix", prefix);

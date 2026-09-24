@@ -1368,14 +1368,14 @@ ASCII-lowercases a string value. A key with no mapping is not stored.
 A rule with no ``rewrite=`` line stores every key, as before.
 
 A name is at most 512 bytes. It may contain letters, digits, ``_``,
-``.`` and ``@``. Space around ``:`` and ``=`` is permitted. A ``#``
+``.``, ``@`` and ``-``. Space around ``:`` and ``=`` is permitted. A ``#``
 starts a comment and the rest of the line is ignored. Giving one
 source key two destinations for the same tag is rejected. Repeating
 the same mapping is ignored.
 
-The tag has to sit on a rule whose ``%.:json%`` parser is not shared with
-a longer rule. Otherwise the rulebase is rejected: one JSON parser cannot
-carry two different maps.
+The tag has to sit on one rule whose ``%.:json%`` or
+``%:name-value-list%`` parser is not shared with a longer rule.
+Otherwise the rulebase is rejected.
 
 ::
 
@@ -1383,6 +1383,12 @@ carry two different maps.
     rewrite=alert:proto=network.transport|lower
     annotate=alert:+event.action="ids_alert"
     rule=alert:%.:json%
+
+::
+
+    rewrite=kv:src=source.ip
+    rewrite=kv:proto=network.transport|lower
+    rule=kv:%.:name-value-list%
 
 Examples
 --------

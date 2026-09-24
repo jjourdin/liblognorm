@@ -1230,6 +1230,37 @@ vm_set_string_field(ln_vm_t *vm, const char *name, const char *val, size_t len)
 	return ln_fast_set_string_static(vm->result, full_name, name_len, val, len) == 0;
 }
 
+/* Store one name-value pair under its rewrite destination.
+ * Called only when the lookup hit. */
+static int
+nv_store_rewritten(ln_vm_t *vm, const struct ln_rw_ent *e,
+		   const char *val, size_t val_len)
+{
+	char *name;
+	const char *v = val;
+	size_t n = val_len;
+
+	if (e->lower && val_len > 0) {
+		char *copy = (char *)ln_arena_alloc(vm->arena, val_len);
+		size_t i;
+
+		if (copy == NULL)
+			return -1;
+		memcpy(copy, val, val_len);
+		for (i = 0; i < val_len; i++) {
+			if (copy[i] >= 'A' && copy[i] <= 'Z')
+				copy[i] = (char)(copy[i] + 32);
+		}
+		v = copy;
+	}
+	name = ln_arena_strndup(vm->arena, e->dst, e->dlen);
+	if (name == NULL)
+		return -1;
+	if (!vm_set_string_field(vm, name, v, n))
+		return -1;
+	return 0;
+}
+
 /**
  * @brief Add integer field using fast result.
  */
@@ -3302,6 +3333,7 @@ vm_exec_instr(ln_vm_t *vm)
 		 * Uses SIMD primitives for scanning where possible.
 		 */
 		const char *ctx_name = turbo_iname(vm, inst, inst->data.char_to.name);
+		const struct ln_rw_tab *map = vm_rewrite_tab(vm, inst);
 		const char sep = (char)inst->data.char_to.delim;  /* 0 = whitespace */
 		const char ass = (char)inst->data.char_to.ass;     /* 0 = '=' */
 		const char ass_char = ass ? ass : '=';
@@ -3424,13 +3456,20 @@ vm_exec_instr(ln_vm_t *vm)
 			}
 
 			/* --- Store the field --- */
-			/* Arena-allocate name so it outlives this stack frame */
-			arena_name = ln_arena_strndup(vm->arena, name_start, name_len);
-			if (!arena_name) break;
+			if (map != NULL) {
+				const struct ln_rw_ent *e = ln_rw_lookup(map, name_start, name_len);
 
-			/* Replacing add: the walker uses json_object_object_add, so a
-			 * second pair with the same name overwrites the first. */
-			vm_set_string_field(vm, arena_name, val_start, val_len);
+				if (e != NULL && nv_store_rewritten(vm, e, val_start, val_len) != 0)
+					break;
+			} else {
+				/* Arena-allocate name so it outlives this stack frame */
+				arena_name = ln_arena_strndup(vm->arena, name_start, name_len);
+				if (!arena_name) break;
+
+				/* Replacing add: the walker uses json_object_object_add, so a
+				 * second pair with the same name overwrites the first. */
+				vm_set_string_field(vm, arena_name, val_start, val_len);
+			}
 			n_pairs++;
 
 			/* --- Advance to the next pair ---
@@ -4870,6 +4909,7 @@ ln_vm_continue(ln_vm_t *vm)
 		 * which read vm state.
 		 */
 		const ln_instr_t *inst = INST();
+		const struct ln_rw_tab *map = vm_rewrite_tab(vm, inst);
 		const char *ctx_name;
 		const char *p;
 		const char *end;
@@ -4983,11 +5023,16 @@ ln_vm_continue(ln_vm_t *vm)
 				}
 			}
 
-			/* Arena-allocate name so it outlives this stack frame */
-			arena_name = ln_arena_strndup(vm->arena, name_start, name_len);
-			if (!arena_name) break;
+			if (map != NULL) {
+				const struct ln_rw_ent *e = ln_rw_lookup(map, name_start, name_len);
 
-			vm_set_string_field(vm, arena_name, val_start, val_len);
+				if (e != NULL && nv_store_rewritten(vm, e, val_start, val_len) != 0)
+					break;
+			} else {
+				arena_name = ln_arena_strndup(vm->arena, name_start, name_len);
+				if (!arena_name) break;
+				vm_set_string_field(vm, arena_name, val_start, val_len);
+			}
 			n_pairs++;
 
 			/* Advance to the next pair (see scalar handler for rationale). */
