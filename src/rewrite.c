@@ -393,7 +393,7 @@ static int
 append_ent(struct ln_rw_tab *t, struct ln_rw_op *op, char **blob, size_t *used,
 	  size_t *cap)
 {
-	char *src_c, *dst_c;
+	char *src_c, *dst_c, *buf;
 	size_t sl, dl, need;
 	struct ln_rw_ent *grown;
 
@@ -433,6 +433,10 @@ append_ent(struct ln_rw_tab *t, struct ln_rw_op *op, char **blob, size_t *used,
 		*blob = nblob;
 		*cap = ncap;
 	}
+	/* No buffer means the entry cannot be stored. */
+	buf = *blob;
+	if (buf == NULL)
+		return -1;
 	if (t->ents == NULL)
 		grown = malloc(sizeof(*t->ents));
 	else
@@ -440,12 +444,12 @@ append_ent(struct ln_rw_tab *t, struct ln_rw_op *op, char **blob, size_t *used,
 	if (grown == NULL)
 		return -1;
 	t->ents = grown;
-	memcpy(*blob + *used, src_c, sl + 1);
-	t->ents[t->n].src = *blob + *used;
+	memcpy(buf + *used, src_c, sl + 1);
+	t->ents[t->n].src = buf + *used;
 	t->ents[t->n].slen = (uint16_t)sl;
 	*used += sl + 1;
-	memcpy(*blob + *used, dst_c, dl + 1);
-	t->ents[t->n].dst = *blob + *used;
+	memcpy(buf + *used, dst_c, dl + 1);
+	t->ents[t->n].dst = buf + *used;
 	t->ents[t->n].dlen = (uint16_t)dl;
 	t->ents[t->n].lower = op->lower ? 1 : 0;
 	*used += dl + 1;
