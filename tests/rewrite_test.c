@@ -503,17 +503,21 @@ main(void)
 		ln_ctx wc = NULL, tc = NULL;
 		struct json_object *wd, *td, *we, *te, *wl, *tl;
 
+		td = NULL;
 		wd = normalize(&wc, 0, cef_plain, cef_msg);
-		td = normalize(&tc, 1, cef_plain, cef_msg);
+		if (turbo_built())
+			td = normalize(&tc, 1, cef_plain, cef_msg);
 		we = key_of(wd, "Extensions");
 		te = key_of(td, "Extensions");
 		if (!str_eq(key_of(wd, "DeviceVendor"), "Vend")
-		    || !str_eq(key_of(td, "DeviceVendor"), "Vend")) {
+		    || (turbo_built() && !str_eq(key_of(td, "DeviceVendor"), "Vend"))) {
 			printf("FAIL cef-plain header (%s) (%s)\n", dump(wd), dump(td));
 			failures++;
 		}
 		wl = walker_leaf("cef-plain", we, "src");
-		tl = turbo_leaf("cef-plain", te, "src");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("cef-plain", te, "src");
 		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
 			printf("FAIL cef-plain/walker src %s\n", dump(wl));
 			failures++;
@@ -526,17 +530,21 @@ main(void)
 		release(wc, wd);
 		release(tc, td);
 
+		td = NULL;
 		wd = normalize(&wc, 0, cef_mapped, cef_msg);
-		td = normalize(&tc, 1, cef_mapped, cef_msg);
+		if (turbo_built())
+			td = normalize(&tc, 1, cef_mapped, cef_msg);
 		if (!str_eq(key_of(wd, "DeviceVendor"), "Vend")
-		    || !str_eq(key_of(td, "DeviceVendor"), "Vend")) {
+		    || (turbo_built() && !str_eq(key_of(td, "DeviceVendor"), "Vend"))) {
 			printf("FAIL cef-hdr (%s) (%s)\n", dump(wd), dump(td));
 			failures++;
 		}
 		we = key_of(wd, "Extensions");
 		te = key_of(td, "Extensions");
 		wl = walker_leaf("cef-src", we, "source.ip");
-		tl = turbo_leaf("cef-src", te, "source.ip");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("cef-src", te, "source.ip");
 		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
 			printf("FAIL cef-src/walker %s\n", dump(wl));
 			failures++;
@@ -547,21 +555,27 @@ main(void)
 		}
 		same_leaf("cef-src", wl, tl);
 		wl = walker_leaf("cef-dst", we, "destination.ip");
-		tl = turbo_leaf("cef-dst", te, "destination.ip");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("cef-dst", te, "destination.ip");
 		same_leaf("cef-dst", wl, tl);
 		if (wl != NULL && !str_eq(wl, "10.1.2.3")) {
 			printf("FAIL cef-dst/walker %s\n", dump(wl));
 			failures++;
 		}
 		wl = walker_leaf("cef-port", we, "source.port");
-		tl = turbo_leaf("cef-port", te, "source.port");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("cef-port", te, "source.port");
 		same_leaf("cef-port", wl, tl);
 		if (wl != NULL && !str_eq(wl, "51515")) {
 			printf("FAIL cef-port %s\n", dump(wl));
 			failures++;
 		}
 		wl = walker_leaf("cef-proto", we, "network.transport");
-		tl = turbo_leaf("cef-proto", te, "network.transport");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("cef-proto", te, "network.transport");
 		same_leaf("cef-proto", wl, tl);
 		if (wl != NULL && !str_eq(wl, "tcp")) {
 			printf("FAIL cef-proto/walker %s\n", dump(wl));
@@ -578,12 +592,16 @@ main(void)
 		release(wc, wd);
 		release(tc, td);
 
+		td = NULL;
 		wd = normalize(&wc, 0, cef_last,
 			"CEF:0|Vend|Prod|1.0|100|Test|5|src=1.1.1.1 client=2.2.2.2");
-		td = normalize(&tc, 1, cef_last,
-			"CEF:0|Vend|Prod|1.0|100|Test|5|src=1.1.1.1 client=2.2.2.2");
+		if (turbo_built())
+			td = normalize(&tc, 1, cef_last,
+				"CEF:0|Vend|Prod|1.0|100|Test|5|src=1.1.1.1 client=2.2.2.2");
 		wl = walker_leaf("cef-last", key_of(wd, "Extensions"), "source.ip");
-		tl = turbo_leaf("cef-last", key_of(td, "Extensions"), "source.ip");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("cef-last", key_of(td, "Extensions"), "source.ip");
 		same_leaf("cef-last", wl, tl);
 		if (wl != NULL && !str_eq(wl, "2.2.2.2")) {
 			printf("FAIL cef-last/walker %s\n", dump(wl));
