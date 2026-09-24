@@ -1367,6 +1367,12 @@ The source key is the dotted path the JSON walker already builds
 ASCII-lowercases a string value. A key with no mapping is not stored.
 A rule with no ``rewrite=`` line stores every key, as before.
 
+A name is at most 512 bytes. It may contain letters, digits, ``_``,
+``.`` and ``@``. Space around ``:`` and ``=`` is permitted. A ``#``
+starts a comment and the rest of the line is ignored. Giving one
+source key two destinations for the same tag is rejected. Repeating
+the same mapping is ignored.
+
 The tag has to sit on a rule whose ``%.:json%`` parser is not shared with
 a longer rule. Otherwise the rulebase is rejected: one JSON parser cannot
 carry two different maps.

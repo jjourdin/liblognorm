@@ -210,6 +210,24 @@ ln_rewrite_id_for_parser(const struct ln_parser_s *prs)
 	return n->rewrite_id;
 }
 
+/*
+ * Parse one rewrite= line. offs is the first byte after "rewrite=".
+ *
+ *   [space] tag ':' [space] src [space] '=' [space] dst [space] ['|' lower]
+ *   [space] ['#' comment]
+ *
+ * tag is letters, digits, '_' or '.'. src and dst are letters, digits,
+ * '_', '.' or '@'. Both are required and at most 512 bytes. |lower is
+ * the only modifier. Anything else after the destination is rejected.
+ *
+ * Lines that share a tag form one list. The same source with the same
+ * destination and the same modifier is ignored. The same source with a
+ * different destination or modifier is rejected. ln_rewrite_bind attaches
+ * the list to a rule after the whole rulebase has been read.
+ *
+ * Returns 0 on success. Returns -1 when the line is malformed or memory
+ * cannot be allocated.
+ */
 int
 ln_rewrite_add_line(ln_ctx ctx, const char *buf, size_t len, size_t offs)
 {

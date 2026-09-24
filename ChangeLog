@@ -4,6 +4,7 @@ unreleased
   %.:json% object while the JSON walker stores them. A rule with no
   rewrite= line is unchanged. |lower ASCII-lowercases a string value.
   The tag must belong to one unambiguous %.:json% rule.
+  See doc/configuration.rst, section "JSON key rewrite".
 
 ----------------------------------------------------------------------
 Version 2.1.1, 2026-09-08
