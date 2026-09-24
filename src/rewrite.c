@@ -416,17 +416,27 @@ append_ent(struct ln_rw_tab *t, struct ln_rw_op *op, char **blob, size_t *used,
 
 		while (ncap < *used + need)
 			ncap *= 2;
-		nblob = realloc(*blob, ncap);
+		/* First growth starts from a null blob, so there is nothing
+		 * to retarget. */
+		if (*blob == NULL)
+			nblob = malloc(ncap);
+		else
+			nblob = realloc(*blob, ncap);
 		if (nblob == NULL)
 			return -1;
-		for (j = 0; j < t->n; j++) {
-			t->ents[j].src = nblob + (t->ents[j].src - *blob);
-			t->ents[j].dst = nblob + (t->ents[j].dst - *blob);
+		if (*blob != NULL) {
+			for (j = 0; j < t->n; j++) {
+				t->ents[j].src = nblob + (t->ents[j].src - *blob);
+				t->ents[j].dst = nblob + (t->ents[j].dst - *blob);
+			}
 		}
 		*blob = nblob;
 		*cap = ncap;
 	}
-	grown = realloc(t->ents, (t->n + 1) * sizeof(*t->ents));
+	if (t->ents == NULL)
+		grown = malloc(sizeof(*t->ents));
+	else
+		grown = realloc(t->ents, (t->n + 1) * sizeof(*t->ents));
 	if (grown == NULL)
 		return -1;
 	t->ents = grown;

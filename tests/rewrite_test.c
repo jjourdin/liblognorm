@@ -21,6 +21,18 @@
 
 static int failures;
 
+/* Non-turbo CI builds still run this test. ln_normalize_to_str is the
+ * walker there, so the nested-key checks must not run. */
+static int
+turbo_built(void)
+{
+#ifdef ENABLE_TURBO
+	return 1;
+#else
+	return 0;
+#endif
+}
+
 static struct json_object *
 key_of(struct json_object *o, const char *key)
 {
@@ -205,10 +217,14 @@ pair(const char *what, const char *rb, const char *msg, const char *dotted,
 	ln_ctx wc = NULL, tc = NULL;
 	struct json_object *wd, *td, *wl, *tl;
 
+	td = NULL;
+	tl = NULL;
 	wd = normalize(&wc, 0, rb, msg);
-	td = normalize(&tc, 1, rb, msg);
 	wl = walker_leaf(what, wd, dotted);
-	tl = turbo_leaf(what, td, dotted);
+	if (turbo_built()) {
+		td = normalize(&tc, 1, rb, msg);
+		tl = turbo_leaf(what, td, dotted);
+	}
 	if (kind == 0) {
 		if (wl != NULL && !str_eq(wl, sval)) {
 			printf("FAIL %s/walker: '%s' is %s, want '%s'\n",
@@ -243,10 +259,13 @@ absent_both(const char *what, const char *rb, const char *msg, const char *key)
 	ln_ctx wc = NULL, tc = NULL;
 	struct json_object *wd, *td;
 
+	td = NULL;
 	wd = normalize(&wc, 0, rb, msg);
-	td = normalize(&tc, 1, rb, msg);
 	absent(what, 0, wd, key);
-	absent(what, 1, td, key);
+	if (turbo_built()) {
+		td = normalize(&tc, 1, rb, msg);
+		absent(what, 1, td, key);
+	}
 	release(wc, wd);
 	release(tc, td);
 }
@@ -257,8 +276,10 @@ expect_unparsed(const char *what, const char *rb, const char *msg)
 	ln_ctx wc = NULL, tc = NULL;
 	struct json_object *wd, *td;
 
+	td = NULL;
 	wd = normalize(&wc, 0, rb, msg);
-	td = normalize(&tc, 1, rb, msg);
+	if (turbo_built())
+		td = normalize(&tc, 1, rb, msg);
 	if (key_of(wd, "unparsed-data") == NULL) {
 		printf("FAIL %s/walker: parsed (%s)\n", what, dump(wd));
 		failures++;

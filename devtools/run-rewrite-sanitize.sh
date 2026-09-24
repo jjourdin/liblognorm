@@ -23,6 +23,8 @@ LDFLAGS="-fsanitize=address,undefined,fuzzer-no-link"
 export ASAN_OPTIONS="${ASAN_OPTIONS:-abort_on_error=1:detect_leaks=0:quarantine_size_mb=16}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}"
 
+# configure is not in git. A fresh checkout has to bootstrap it.
+( cd "$ROOT" && autoreconf -fvi )
 "$ROOT/configure" --enable-turbo CC="$CC" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
 make -j"$JOBS"
 make -C tests rewrite_test rewrite_fuzz
