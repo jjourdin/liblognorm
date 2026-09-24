@@ -197,12 +197,13 @@ TESTS = \
 rewrite_test_SOURCES = rewrite_test.c
 rewrite_test_CPPFLAGS = $(JSON_C_CFLAGS) $(LIBESTR_CFLAGS) $(WARN_CFLAGS) -I$(top_srcdir)/src
 rewrite_test_LDADD = ../src/liblognorm.la $(JSON_C_LIBS) $(LIBESTR_LIBS)
-rewrite_test_LDFLAGS = -no-install
+# -static links the uninstalled archive. -no-install still loads a system liblognorm.so.5.
+rewrite_test_LDFLAGS = -static
 
 rewrite_fuzz_SOURCES = rewrite_fuzz.c
 rewrite_fuzz_CPPFLAGS = $(JSON_C_CFLAGS) $(LIBESTR_CFLAGS) $(WARN_CFLAGS) -I$(top_srcdir)/src
 rewrite_fuzz_LDADD = ../src/liblognorm.la $(JSON_C_LIBS) $(LIBESTR_LIBS)
-rewrite_fuzz_LDFLAGS = -no-install
+rewrite_fuzz_LDFLAGS = -static
 
 REGEXP_TESTS = \
 	field_regex_default_group_parse_and_return.sh \
