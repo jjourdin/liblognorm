@@ -501,10 +501,14 @@ main(void)
 		ln_ctx wc = NULL, tc = NULL;
 		struct json_object *wd, *td, *wl, *tl;
 
+		td = NULL;
 		wd = normalize(&wc, 0, nv_plain, nv_msg);
-		td = normalize(&tc, 1, nv_plain, nv_msg);
+		if (turbo_built())
+			td = normalize(&tc, 1, nv_plain, nv_msg);
 		wl = walker_leaf("nv-plain", wd, "src");
-		tl = turbo_leaf("nv-plain", td, "src");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("nv-plain", td, "src");
 		same_leaf("nv-plain", wl, tl);
 		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
 			printf("FAIL nv-plain %s\n", dump(wl));
@@ -513,17 +517,23 @@ main(void)
 		release(wc, wd);
 		release(tc, td);
 
+		td = NULL;
 		wd = normalize(&wc, 0, nv_mapped, nv_msg);
-		td = normalize(&tc, 1, nv_mapped, nv_msg);
+		if (turbo_built())
+			td = normalize(&tc, 1, nv_mapped, nv_msg);
 		wl = walker_leaf("nv-src", wd, "source.ip");
-		tl = turbo_leaf("nv-src", td, "source.ip");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("nv-src", td, "source.ip");
 		same_leaf("nv-src", wl, tl);
 		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
 			printf("FAIL nv-src/walker %s\n", dump(wl));
 			failures++;
 		}
 		wl = walker_leaf("nv-proto", wd, "network.transport");
-		tl = turbo_leaf("nv-proto", td, "network.transport");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("nv-proto", td, "network.transport");
 		same_leaf("nv-proto", wl, tl);
 		if (wl != NULL && !str_eq(wl, "tcp")) {
 			printf("FAIL nv-proto/walker %s\n", dump(wl));
@@ -540,10 +550,14 @@ main(void)
 		release(wc, wd);
 		release(tc, td);
 
+		td = NULL;
 		wd = normalize(&wc, 0, nv_mapped, "src-ip=198.51.100.9");
-		td = normalize(&tc, 1, nv_mapped, "src-ip=198.51.100.9");
+		if (turbo_built())
+			td = normalize(&tc, 1, nv_mapped, "src-ip=198.51.100.9");
 		wl = walker_leaf("nv-hyphen", wd, "source.ip");
-		tl = turbo_leaf("nv-hyphen", td, "source.ip");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("nv-hyphen", td, "source.ip");
 		same_leaf("nv-hyphen", wl, tl);
 		if (wl != NULL && !str_eq(wl, "198.51.100.9")) {
 			printf("FAIL nv-hyphen %s\n", dump(wl));
@@ -552,10 +566,14 @@ main(void)
 		release(wc, wd);
 		release(tc, td);
 
+		td = NULL;
 		wd = normalize(&wc, 0, nv_last, "src=1.1.1.1 client=2.2.2.2");
-		td = normalize(&tc, 1, nv_last, "src=1.1.1.1 client=2.2.2.2");
+		if (turbo_built())
+			td = normalize(&tc, 1, nv_last, "src=1.1.1.1 client=2.2.2.2");
 		wl = walker_leaf("nv-last", wd, "source.ip");
-		tl = turbo_leaf("nv-last", td, "source.ip");
+		tl = NULL;
+		if (turbo_built())
+			tl = turbo_leaf("nv-last", td, "source.ip");
 		same_leaf("nv-last", wl, tl);
 		if (wl != NULL && !str_eq(wl, "2.2.2.2")) {
 			printf("FAIL nv-last/walker %s\n", dump(wl));
