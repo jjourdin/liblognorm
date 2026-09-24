@@ -41,6 +41,7 @@
 #include "lognorm.h"
 #include "internal.h"
 #include "parser.h"
+#include "rewrite.h"
 #include "samp.h"
 #include "helpers.h"
 
@@ -3277,8 +3278,15 @@ cefParseExtensions(npb_t *const npb,
 	size_t iValue, lenValue;
 	char *name = NULL;
 	char *value = NULL;
+	const struct ln_rw_tab *tab;
+
+	tab = NULL;
+	if(jroot != NULL && npb->prs != NULL)
+		tab = ln_rewrite_tab(npb->ctx, ln_rewrite_id_for_parser(npb->prs));
 
 	while(i < npb->strLen) {
+		const struct ln_rw_ent *ent = NULL;
+
 		while(i < npb->strLen && npb->str[i] == ' ')
 			++i;
 		iName = i;
@@ -3300,41 +3308,56 @@ cefParseExtensions(npb_t *const npb,
 			++i; /* skip past value */
 		}
 
-		if(jroot != NULL) {
-			CHKN(name = malloc(sizeof(char) * (lenName + 1)));
-			memcpy(name, npb->str+iName, lenName);
-			name[lenName] = '\0';
-			CHKN(value = malloc(sizeof(char) * (lenValue + 1)));
-			/* copy value but escape it */
-			size_t iDst = 0;
-			for(size_t iSrc = 0 ; iSrc < lenValue ; ++iSrc) {
-				if(npb->str[iValue+iSrc] == '\\') {
-					++iSrc; /* we know the next char must exist! */
-					switch(npb->str[iValue+iSrc]) {
-					case '=':	value[iDst] = '=';
-							break;
-					case 'n':	value[iDst] = '\n';
-							break;
-					case 'r':	value[iDst] = '\r';
-							break;
-					case '\\':	value[iDst] = '\\';
-							break;
-					case '/':	value[iDst] = '/';
-							break;
-					default:	break;
-					}
-				} else {
-					value[iDst] = npb->str[iValue+iSrc];
-				}
-				++iDst;
-			}
-			value[iDst] = '\0';
-			json_object *json;
-			CHKN(json = json_object_new_string(value));
-			json_object_object_add(jroot, name, json);
-			free(name); name = NULL;
-			free(value); value = NULL;
+		if(jroot == NULL)
+			continue;
+		if(tab != NULL) {
+			ent = ln_rw_lookup(tab, npb->str + iName, lenName);
+			if(ent == NULL)
+				continue;
 		}
+		CHKN(name = malloc(sizeof(char) * (lenName + 1)));
+		memcpy(name, npb->str+iName, lenName);
+		name[lenName] = '\0';
+		CHKN(value = malloc(sizeof(char) * (lenValue + 1)));
+		/* copy value but escape it */
+		size_t iDst = 0;
+		for(size_t iSrc = 0 ; iSrc < lenValue ; ++iSrc) {
+			if(npb->str[iValue+iSrc] == '\\') {
+				++iSrc; /* we know the next char must exist! */
+				switch(npb->str[iValue+iSrc]) {
+				case '=':	value[iDst] = '=';
+						break;
+				case 'n':	value[iDst] = '\n';
+						break;
+				case 'r':	value[iDst] = '\r';
+						break;
+				case '\\':	value[iDst] = '\\';
+						break;
+				case '/':	value[iDst] = '/';
+						break;
+				default:	break;
+				}
+			} else {
+				value[iDst] = npb->str[iValue+iSrc];
+			}
+			++iDst;
+		}
+		value[iDst] = '\0';
+		if(ent != NULL && ent->lower) {
+			size_t k;
+			for(k = 0; k < iDst; ++k) {
+				if(value[k] >= 'A' && value[k] <= 'Z')
+					value[k] = (char)(value[k] + 32);
+			}
+		}
+		{
+			json_object *json;
+			const char *stored = (ent != NULL) ? ent->dst : name;
+			CHKN(json = json_object_new_string(value));
+			json_object_object_add(jroot, stored, json);
+		}
+		free(name); name = NULL;
+		free(value); value = NULL;
 	}
 
 	*offs = npb->strLen; /* this parser consume everything or fails */

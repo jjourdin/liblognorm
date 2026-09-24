@@ -1,10 +1,10 @@
 /**
  * @file rewrite.h
- * @brief Per-rule rename of inlined JSON keys (%.:json%).
+ * @brief Per-rule rename of inlined JSON keys and CEF extension keys.
  *
  * A rewrite= line is not an annotation. annotate= adds a constant field.
- * rewrite= decides, while a JSON object is stored, which of its keys are
- * kept and under what name. A rule with no rewrite= line is left untouched.
+ * rewrite= decides, while those keys are stored, which of them are kept
+ * and under what name. A rule with no rewrite= line is left untouched.
  */
 #ifndef LIBLOGNORM_REWRITE_H_INCLUDED
 #define LIBLOGNORM_REWRITE_H_INCLUDED

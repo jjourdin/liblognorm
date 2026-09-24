@@ -484,6 +484,119 @@ main(void)
 		release(ctx, json);
 	}
 
+	{
+		static const char cef_plain[] = "rule=:%.:cef%\n";
+		static const char cef_mapped[] =
+			"version=2\n"
+			"rewrite=cef:src=source.ip\n"
+			"rewrite=cef:dst=destination.ip\n"
+			"rewrite=cef:spt=source.port\n"
+			"rewrite=cef:proto=network.transport|lower\n"
+			"rule=cef:%.:cef%\n";
+		static const char cef_last[] =
+			"version=2\n"
+			"rewrite=cef:src=source.ip\n"
+			"rewrite=cef:client=source.ip\n"
+			"rule=cef:%.:cef%\n";
+		const char *cef_msg =
+			"CEF:0|Vend|Prod|1.0|100|Test|5|src=203.0.113.7 dst=10.1.2.3 spt=51515 proto=TCP app=http";
+		ln_ctx wc = NULL, tc = NULL;
+		struct json_object *wd, *td, *we, *te, *wl, *tl;
+
+		wd = normalize(&wc, 0, cef_plain, cef_msg);
+		td = normalize(&tc, 1, cef_plain, cef_msg);
+		we = key_of(wd, "Extensions");
+		te = key_of(td, "Extensions");
+		if (!str_eq(key_of(wd, "DeviceVendor"), "Vend")
+		    || !str_eq(key_of(td, "DeviceVendor"), "Vend")) {
+			printf("FAIL cef-plain header (%s) (%s)\n", dump(wd), dump(td));
+			failures++;
+		}
+		wl = walker_leaf("cef-plain", we, "src");
+		tl = turbo_leaf("cef-plain", te, "src");
+		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
+			printf("FAIL cef-plain/walker src %s\n", dump(wl));
+			failures++;
+		}
+		if (tl != NULL && !str_eq(tl, "203.0.113.7")) {
+			printf("FAIL cef-plain/turbo src %s\n", dump(tl));
+			failures++;
+		}
+		same_leaf("cef-plain", wl, tl);
+		release(wc, wd);
+		release(tc, td);
+
+		wd = normalize(&wc, 0, cef_mapped, cef_msg);
+		td = normalize(&tc, 1, cef_mapped, cef_msg);
+		if (!str_eq(key_of(wd, "DeviceVendor"), "Vend")
+		    || !str_eq(key_of(td, "DeviceVendor"), "Vend")) {
+			printf("FAIL cef-hdr (%s) (%s)\n", dump(wd), dump(td));
+			failures++;
+		}
+		we = key_of(wd, "Extensions");
+		te = key_of(td, "Extensions");
+		wl = walker_leaf("cef-src", we, "source.ip");
+		tl = turbo_leaf("cef-src", te, "source.ip");
+		if (wl != NULL && !str_eq(wl, "203.0.113.7")) {
+			printf("FAIL cef-src/walker %s\n", dump(wl));
+			failures++;
+		}
+		if (tl != NULL && !str_eq(tl, "203.0.113.7")) {
+			printf("FAIL cef-src/turbo %s\n", dump(tl));
+			failures++;
+		}
+		same_leaf("cef-src", wl, tl);
+		wl = walker_leaf("cef-dst", we, "destination.ip");
+		tl = turbo_leaf("cef-dst", te, "destination.ip");
+		same_leaf("cef-dst", wl, tl);
+		if (wl != NULL && !str_eq(wl, "10.1.2.3")) {
+			printf("FAIL cef-dst/walker %s\n", dump(wl));
+			failures++;
+		}
+		wl = walker_leaf("cef-port", we, "source.port");
+		tl = turbo_leaf("cef-port", te, "source.port");
+		same_leaf("cef-port", wl, tl);
+		if (wl != NULL && !str_eq(wl, "51515")) {
+			printf("FAIL cef-port %s\n", dump(wl));
+			failures++;
+		}
+		wl = walker_leaf("cef-proto", we, "network.transport");
+		tl = turbo_leaf("cef-proto", te, "network.transport");
+		same_leaf("cef-proto", wl, tl);
+		if (wl != NULL && !str_eq(wl, "tcp")) {
+			printf("FAIL cef-proto/walker %s\n", dump(wl));
+			failures++;
+		}
+		if (tl != NULL && !str_eq(tl, "tcp")) {
+			printf("FAIL cef-proto/turbo %s\n", dump(tl));
+			failures++;
+		}
+		absent("cef-drop", 0, we, "src");
+		absent("cef-drop", 1, te, "src");
+		absent("cef-drop", 0, we, "app");
+		absent("cef-drop", 1, te, "app");
+		release(wc, wd);
+		release(tc, td);
+
+		wd = normalize(&wc, 0, cef_last,
+			"CEF:0|Vend|Prod|1.0|100|Test|5|src=1.1.1.1 client=2.2.2.2");
+		td = normalize(&tc, 1, cef_last,
+			"CEF:0|Vend|Prod|1.0|100|Test|5|src=1.1.1.1 client=2.2.2.2");
+		wl = walker_leaf("cef-last", key_of(wd, "Extensions"), "source.ip");
+		tl = turbo_leaf("cef-last", key_of(td, "Extensions"), "source.ip");
+		same_leaf("cef-last", wl, tl);
+		if (wl != NULL && !str_eq(wl, "2.2.2.2")) {
+			printf("FAIL cef-last/walker %s\n", dump(wl));
+			failures++;
+		}
+		if (tl != NULL && !str_eq(tl, "2.2.2.2")) {
+			printf("FAIL cef-last/turbo %s\n", dump(tl));
+			failures++;
+		}
+		release(wc, wd);
+		release(tc, td);
+	}
+
 	expect_load_fail("bad-modifier", bad_mod);
 	expect_load_fail("conflict", twice);
 	expect_load_fail("shared-prefix", prefix);

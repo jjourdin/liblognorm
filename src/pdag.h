@@ -163,6 +163,7 @@ struct npb {
 	size_t longestParsedTo;	/**< up to which byte could this be parsed? */
 	es_str_t *rule;			/**< a mock-up of the rule used to parse */
 	es_str_t *exec_path;
+	const struct ln_parser_s *prs;	/**< parser currently executing */
 #ifdef ADVANCED_STATS
 	int pathlen;
 	int backtracked;

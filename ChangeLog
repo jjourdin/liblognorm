@@ -1,9 +1,10 @@
 ----------------------------------------------------------------------
 unreleased
 - rulebase directive rewrite= renames or drops keys of an inlined
-  %.:json% object while the JSON walker stores them. A rule with no
+  %.:json% object, and keys of a %:cef% extension list, while they
+  are stored. The six CEF header fields are unchanged. A rule with no
   rewrite= line is unchanged. |lower ASCII-lowercases a string value.
-  The tag must belong to one unambiguous %.:json% rule.
+  The tag must belong to one unambiguous %.:json% or %:cef% rule.
   See doc/configuration.rst, section "JSON key rewrite".
 
 ----------------------------------------------------------------------

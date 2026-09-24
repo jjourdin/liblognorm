@@ -1353,10 +1353,11 @@ There can be multiple annotations for the same tag.
 JSON key rewrite
 ----------------
 
-``rewrite=`` renames keys of an inlined JSON object (``%.:json%``) as the
-object is stored. It does not add a constant, and it is not applied to a
-named ``%field:json%`` value or to fields the rule parses itself.
-``annotate=`` is unchanged.
+``rewrite=`` renames keys of an inlined JSON object (``%.:json%``) and
+keys of a CEF extension list (``%:cef%``) as those keys are stored. It
+does not add a constant. It is not applied to a named ``%field:json%``
+value, to the six CEF header fields, or to fields the rule parses
+itself. ``annotate=`` is unchanged.
 
 ::
 
@@ -1373,9 +1374,8 @@ starts a comment and the rest of the line is ignored. Giving one
 source key two destinations for the same tag is rejected. Repeating
 the same mapping is ignored.
 
-The tag has to sit on a rule whose ``%.:json%`` parser is not shared with
-a longer rule. Otherwise the rulebase is rejected: one JSON parser cannot
-carry two different maps.
+The tag has to sit on one rule whose ``%.:json%`` or ``%:cef%`` parser
+is not shared with a longer rule. Otherwise the rulebase is rejected.
 
 ::
 
@@ -1383,6 +1383,12 @@ carry two different maps.
     rewrite=alert:proto=network.transport|lower
     annotate=alert:+event.action="ids_alert"
     rule=alert:%.:json%
+
+::
+
+    rewrite=cef:src=source.ip
+    rewrite=cef:proto=network.transport|lower
+    rule=cef:%.:cef%
 
 Examples
 --------

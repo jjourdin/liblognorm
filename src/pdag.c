@@ -1399,7 +1399,10 @@ fixJSON(struct ln_pdag *dag,
 	} else if(prs->name[0] == '.' && prs->name[1] == '\0') {
 		const struct ln_rw_tab *rtab = ln_rewrite_tab(dag->ctx,
 			ln_rewrite_id_for_parser(prs));
-		if (rtab != NULL && json_object_get_type(*value) == json_type_object) {
+		/* CEF rewrites extension keys while it stores them. The
+		 * object merge below keeps the header fields. */
+		const int json_inline = strcmp(parserName(prs->prsid), "json") == 0;
+		if (json_inline && rtab != NULL && json_object_get_type(*value) == json_type_object) {
 			if (ln_rewrite_merge(json, *value, rtab, failOnDuplicate) != 0) {
 				json_object_put(*value);
 				*value = NULL;
@@ -1410,7 +1413,7 @@ fixJSON(struct ln_pdag *dag,
 			r = 0;
 			goto done;
 		}
-		if (rtab != NULL) {
+		if (json_inline && rtab != NULL) {
 			/* Top-level array (or scalar): no object key to rename.
 			 * Drop it, matching the turbo walker, which only keeps
 			 * mapped leaves. */
@@ -1569,8 +1572,12 @@ tryParser(npb_t *const __restrict__ npb,
 		es_addBuf(&npb->astats.exec_path, "[R:USR],", 8);
 		#endif
 	} else {
+		const struct ln_parser_s *saved = npb->prs;
+
+		npb->prs = prs;
 		r = parser_lookup_table[prs->prsid].parser(npb,
 			offs, prs->parser_data, parser_name, pParsed, (prs->name == NULL) ? NULL : value);
+		npb->prs = saved;
 	}
 done:
 	LN_DBGPRINTF(npb->ctx, "parser lookup returns %d, pParsed %zu", r, *pParsed);

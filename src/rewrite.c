@@ -1,6 +1,6 @@
 /**
  * @file rewrite.c
- * @brief Rename keys of an inlined JSON object (%.:json%).
+ * @brief Rename keys of an inlined JSON object or of CEF extensions.
  *
  * The table for a rule is built once, when the rulebase is loaded. At match
  * time a key is one hash probe: a hit stores the ECS name, a miss stores
@@ -18,8 +18,9 @@
 #include "pdag.h"
 #include "rewrite.h"
 
-/* Index of "json" in pdag.c parser_lookup_table. turbo.c PRSID_JSON matches. */
+/* Indexes in pdag.c parser_lookup_table. turbo.c PRSID_* matches. */
 #define LN_PRSID_JSON 21
+#define LN_PRSID_CEF  24
 
 struct ln_rw_op {
 	struct ln_rw_op *next;
@@ -614,13 +615,14 @@ bind_node(ln_ctx ctx, struct ln_pdag *n, int depth)
 		struct ln_pdag *term;
 		unsigned id = 0;
 
-		if (prs->prsid == LN_PRSID_JSON && prs->name != NULL
-		    && prs->name[0] == '.' && prs->name[1] == '\0') {
+		if ((prs->prsid == LN_PRSID_JSON && prs->name != NULL
+		     && prs->name[0] == '.' && prs->name[1] == '\0')
+		    || prs->prsid == LN_PRSID_CEF) {
 			term = linear_terminal(prs->node);
 			if (term != NULL && term->nparsers != 0
 			    && terminal_has_rewrite(ctx->rewrites, term)) {
 				ln_errprintf(ctx, 0,
-					"rewrite: %%.:json%% rule is a prefix of a longer rule");
+					"rewrite: %%.:json%% or %%:cef%% rule is a prefix of a longer rule");
 				return -1;
 			}
 			if (term != NULL && term->nparsers == 0
@@ -670,7 +672,7 @@ ln_rewrite_bind(ln_ctx ctx)
 			continue;
 		tag = ln_es_str2cstr(&rule->tag);
 		ln_errprintf(ctx, 0,
-			"rewrite tag '%s' is not on an unambiguous %%.:json%% rule",
+			"rewrite tag '%s' is not on one %%.:json%% or %%:cef%% rule",
 			tag != NULL ? tag : "?");
 		return -1;
 	}
