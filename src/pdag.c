@@ -1397,6 +1397,30 @@ fixJSON(struct ln_pdag *dag,
 		}
 		*value = NULL;
 	} else if(prs->name[0] == '.' && prs->name[1] == '\0') {
+		/* only an inlined %.:json% object is renamed; other inlined
+		 * parsers (custom types) keep their fields */
+		const struct ln_rw_tab *rtab = (prs->prsid == LN_PRSID_JSON)
+			? ln_rewrite_tab_for_parser(dag->ctx, prs) : NULL;
+		if (rtab != NULL && json_object_get_type(*value) == json_type_object) {
+			if (ln_rewrite_merge(json, *value, rtab, failOnDuplicate) != 0) {
+				json_object_put(*value);
+				*value = NULL;
+				goto done;
+			}
+			json_object_put(*value);
+			*value = NULL;
+			r = 0;
+			goto done;
+		}
+		if (rtab != NULL) {
+			/* Top-level array (or scalar): no object key to rename.
+			 * Drop it, matching the turbo walker, which only keeps
+			 * mapped leaves. */
+			json_object_put(*value);
+			*value = NULL;
+			r = 0;
+			goto done;
+		}
 		if(json_object_get_type(*value) == json_type_object) {
 			struct json_object_iterator it = json_object_iter_begin(*value);
 			struct json_object_iterator itEnd = json_object_iter_end(*value);

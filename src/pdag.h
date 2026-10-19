@@ -113,6 +113,7 @@ struct ln_pdag {
 		unsigned visited:1;	/**< work var for recursive procedures */
 	} flags;
 	struct json_object *tags;	/**< tags to assign to events of this type */
+	unsigned rewrite_id;		/**< 1-based JSON rewrite table, 0 = none */
 	int refcnt;			/**< reference count for deleting tracking */
 	struct {
 		unsigned called;
