@@ -1321,8 +1321,13 @@ addUnparsedField(ln_ctx ctx, const char *str, const size_t strLen, const size_t 
 	struct json_object *value;
 
 	CHKR(addOriginalMsg(str, strLen, json));
-	
-	value = json_object_new_string(str + offs);
+
+	/* str is a length, not a C string. json_object_new_string() would
+	 * strlen() past a buffer that is not NUL-terminated. */
+	{
+		const size_t from = (offs > strLen) ? strLen : offs;
+		value = json_object_new_string_len(str + from, strLen - from);
+	}
 	if (value == NULL) {
 		goto done;
 	}
