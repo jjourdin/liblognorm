@@ -1027,6 +1027,46 @@ cef_name_ok(const char *s, size_t n)
 	return 1;
 }
 
+/* Rename one CEF extension. Called only when a rewrite table is active.
+ * A miss is the caller's job: it does not store the key. first_field is
+ * n_fields when the extensions started; see ln_fast_set_rewritten_string. */
+static int
+cef_store_rewritten(ln_vm_t *vm, const struct ln_rw_ent *e,
+		    const char *val, size_t val_len, uint32_t first_field)
+{
+	const char *full_name;
+	uint16_t full_len;
+	char *name;
+	const char *v = val;
+	size_t n = val_len;
+
+	if (e->lower && val_len > 0) {
+		char *copy = (char *)ln_arena_alloc(vm->arena, val_len);
+		size_t i;
+
+		if (copy == NULL)
+			return -1;
+		memcpy(copy, val, val_len);
+		for (i = 0; i < val_len; i++) {
+			if (copy[i] >= 'A' && copy[i] <= 'Z')
+				copy[i] = (char)(copy[i] + 32);
+		}
+		v = copy;
+	}
+	name = ln_arena_strndup(vm->arena, e->dst, e->dlen);
+	if (name == NULL)
+		return -1;
+	if (vm->result == NULL)
+		return 0;
+	full_name = vm_build_field_name(vm, name, &full_len);
+	if (full_name == NULL || full_name[0] == '\0')
+		return 0;
+	if (ln_fast_set_rewritten_string(vm->result, first_field, full_name, full_len,
+					 v, (uint32_t)n) != 0)
+		return -1;
+	return 0;
+}
+
 /*
  * Remove CEF escape characters. A header field escapes only the delimiter and
  * the backslash itself; an extension value additionally spells a newline as
@@ -3785,6 +3825,7 @@ vm_exec_instr(ln_vm_t *vm)
 
 	case OP_CEF_HDR: {
 		const char *name = turbo_iname(vm, inst, inst->data.str);
+		const struct ln_rw_tab *map = vm_rewrite_tab(vm, inst);
 		const char *p = vm->ip;
 		const char *end = vm->input_end;
 		size_t rem = remaining;
@@ -3850,11 +3891,13 @@ vm_exec_instr(ln_vm_t *vm)
 			 * (the context stack tracks only the top level). */
 			const char *ext_ctx = "Extensions";
 			int n_ext;
+			uint32_t ext_first;
 
 			/* Push the plain segment: the context stack composes the
 			 * full path itself. */
 			vm_push_field_ctx(vm, ext_ctx, false);
 			n_ext = 0;
+			ext_first = vm->result != NULL ? vm->result->n_fields : 0;
 
 			while (p < end) {
 				const char *key_start;
@@ -3890,6 +3933,22 @@ vm_exec_instr(ln_vm_t *vm)
 				val_start = p;
 				cef_take_extension_value(val_start, end, &val_len, &p);
 
+				if (map != NULL) {
+					const struct ln_rw_ent *e;
+
+					if (cef_unescape(vm, val_start, val_len, 1,
+									 &val_span, &val_len) != 0) {
+						vm_pop_field_ctx(vm);
+						if (name[0]) vm_pop_field_ctx(vm);
+						return -1;
+					}
+					e = ln_rw_lookup(map, key_start, key_len);
+					if (e != NULL && cef_store_rewritten(vm, e,
+							val_span, val_len, ext_first) != 0)
+						break;
+					n_ext++;
+					continue;
+				}
 				arena_key = ln_arena_strndup(vm->arena,
 							key_start, key_len);
 				if (!arena_key) break;
@@ -5343,6 +5402,7 @@ ln_vm_continue(ln_vm_t *vm)
 		 * 6 pipe-delimited fields with escape handling, then key=value extensions.
 		 */
 		const ln_instr_t *inst = INST();
+		const struct ln_rw_tab *map = vm_rewrite_tab(vm, inst);
 		const char *name;
 		const char *p;
 		int hdr_idx;
@@ -5411,10 +5471,12 @@ ln_vm_continue(ln_vm_t *vm)
 			 * (the context stack tracks only the top level). */
 			const char *ext_ctx = "Extensions";
 			int n_ext = 0;
+			uint32_t ext_first;
 
 			/* Push the plain segment: the context stack composes the
 			 * full path itself. */
 			vm_push_field_ctx(vm, ext_ctx, false);
+			ext_first = vm->result != NULL ? vm->result->n_fields : 0;
 
 			while (p < input_end) {
 				const char *key_start;
@@ -5448,6 +5510,23 @@ ln_vm_continue(ln_vm_t *vm)
 				val_start = p;
 				cef_take_extension_value(val_start, input_end, &val_len, &p);
 
+				if (map != NULL) {
+					const struct ln_rw_ent *e;
+
+					if (cef_unescape(vm, val_start, val_len, 1,
+									 &val_span, &val_len) != 0) {
+						vm_pop_field_ctx(vm);
+						if (name[0]) vm_pop_field_ctx(vm);
+						WRITEBACK();
+						BACKTRACK();
+					}
+					e = ln_rw_lookup(map, key_start, key_len);
+					if (e != NULL && cef_store_rewritten(vm, e,
+							val_span, val_len, ext_first) != 0)
+						break;
+					n_ext++;
+					continue;
+				}
 				arena_key = ln_arena_strndup(vm->arena,
 							key_start, key_len);
 				if (!arena_key) break;

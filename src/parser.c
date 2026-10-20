@@ -41,6 +41,7 @@
 #include "lognorm.h"
 #include "internal.h"
 #include "parser.h"
+#include "rewrite.h"
 #include "samp.h"
 #include "helpers.h"
 
@@ -3277,8 +3278,15 @@ cefParseExtensions(npb_t *const npb,
 	size_t iValue, lenValue;
 	char *name = NULL;
 	char *value = NULL;
+	const struct ln_rw_tab *tab;
+
+	tab = NULL;
+	if(jroot != NULL)
+		tab = ln_rewrite_tab_for_parser(npb->ctx, npb->prs);
 
 	while(i < npb->strLen) {
+		const struct ln_rw_ent *ent = NULL;
+
 		while(i < npb->strLen && npb->str[i] == ' ')
 			++i;
 		iName = i;
@@ -3300,7 +3308,10 @@ cefParseExtensions(npb_t *const npb,
 			++i; /* skip past value */
 		}
 
-		if(jroot != NULL) {
+		/* with a rewrite table, only the keys it lists are stored */
+		if(jroot != NULL && tab != NULL)
+			ent = ln_rw_lookup(tab, npb->str + iName, lenName);
+		if(jroot != NULL && (tab == NULL || ent != NULL)) {
 			CHKN(name = malloc(sizeof(char) * (lenName + 1)));
 			memcpy(name, npb->str+iName, lenName);
 			name[lenName] = '\0';
@@ -3329,9 +3340,15 @@ cefParseExtensions(npb_t *const npb,
 				++iDst;
 			}
 			value[iDst] = '\0';
+			if(ent != NULL && ent->lower) {
+				for(size_t k = 0 ; k < iDst ; ++k) {
+					if(value[k] >= 'A' && value[k] <= 'Z')
+						value[k] = (char)(value[k] + 32);
+				}
+			}
 			json_object *json;
 			CHKN(json = json_object_new_string(value));
-			json_object_object_add(jroot, name, json);
+			json_object_object_add(jroot, (ent != NULL) ? ent->dst : name, json);
 			free(name); name = NULL;
 			free(value); value = NULL;
 		}
