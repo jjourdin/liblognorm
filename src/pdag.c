@@ -1398,8 +1398,8 @@ fixJSON(struct ln_pdag *dag,
 		*value = NULL;
 	} else if(prs->name[0] == '.' && prs->name[1] == '\0') {
 		/* only an inlined %.:json% object is renamed. Other inlined
-		 * parsers (custom types, CEF, which rewrites its extension keys
-		 * while it stores them) keep their fields here */
+		 * parsers (custom types; CEF and name-value-list, which rewrite
+		 * their keys while they store them) keep their fields here */
 		const struct ln_rw_tab *rtab = (prs->prsid == LN_PRSID_JSON)
 			? ln_rewrite_tab_for_parser(dag->ctx, prs) : NULL;
 		if (rtab != NULL && json_object_get_type(*value) == json_type_object) {

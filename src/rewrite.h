@@ -1,6 +1,6 @@
 /**
  * @file rewrite.h
- * @brief Per-rule rename of inlined JSON keys and CEF extension keys.
+ * @brief Per-rule rename of inlined JSON, CEF extension and name-value keys.
  *
  * A rewrite= line is not an annotation. annotate= adds a constant field.
  * rewrite= decides, while those keys are stored, which of them are kept
@@ -62,6 +62,7 @@ unsigned ln_rewrite_id_for_parser(const struct ln_parser_s *prs);
 /* Indexes in pdag.c parser_lookup_table; turbo.c PRSID_* match. */
 #define LN_PRSID_JSON 21
 #define LN_PRSID_CEF 24
+#define LN_PRSID_NAMEVALUE 26
 
 /**
  * Rewrite table bound to the rule this parser belongs to, or NULL. Returns

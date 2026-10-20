@@ -1,6 +1,6 @@
 /**
  * @file rewrite.c
- * @brief Rename keys of an inlined JSON object or of CEF extensions.
+ * @brief Rename keys of an inlined JSON object, CEF extensions or name-value pairs.
  *
  * The table for a rule is built once, when the rulebase is loaded. At match
  * time a key is one hash probe: a hit stores the ECS name, a miss stores
@@ -127,7 +127,7 @@ find_rule(ln_rewriteSet *rs, const char *tag, size_t n)
 static int
 name_char(unsigned char c)
 {
-	return isalnum(c) || c == '_' || c == '.' || c == '@';
+	return isalnum(c) || c == '_' || c == '.' || c == '@' || c == '-';
 }
 
 static uint32_t
@@ -250,8 +250,8 @@ skip_name(const char *buf, size_t len, size_t i)
  * tag is any run of bytes rule= accepts in a tag (anything but ',' and
  * ':') except whitespace, so every single-word rule tag can carry
  * rewrite= lines. src and dst are letters, digits,
- * '_', '.' or '@'. Both are required and at most 511 bytes, the longest
- * path the walker builds. |lower is
+ * '_', '.', '@' or '-'. Both are required and at most 511 bytes, the
+ * longest path the walker builds. |lower is
  * the only modifier. Anything else after the destination is rejected.
  *
  * Returns 1 and fills *line for a mapping, -1 after reporting a malformed
@@ -692,12 +692,13 @@ bind_node(ln_ctx ctx, struct ln_pdag *n, int depth)
 
 		if ((prs->prsid == LN_PRSID_JSON && prs->name != NULL
 		     && prs->name[0] == '.' && prs->name[1] == '\0')
-		    || prs->prsid == LN_PRSID_CEF) {
+		    || prs->prsid == LN_PRSID_CEF
+		    || prs->prsid == LN_PRSID_NAMEVALUE) {
 			term = linear_terminal(prs->node);
 			if (term != NULL && term->nparsers != 0
 			    && terminal_has_rewrite(ctx->rewrites, term)) {
 				ln_errprintf(ctx, 0,
-					"rewrite: %%.:json%% or %%:cef%% rule is a prefix of a longer rule");
+					"rewrite: open-key rule is a prefix of a longer rule");
 				return -1;
 			}
 			if (term != NULL && term->nparsers == 0
@@ -747,7 +748,7 @@ ln_rewrite_bind(ln_ctx ctx)
 			continue;
 		tag = ln_es_str2cstr(&rule->tag);
 		ln_errprintf(ctx, 0,
-			"rewrite tag '%s' is not on one %%.:json%% or %%:cef%% rule",
+			"rewrite tag '%s' is not on one %%.:json%%, %%:cef%% or %%:name-value-list%% rule",
 			tag != NULL ? tag : "?");
 		return -1;
 	}

@@ -966,9 +966,10 @@ emit_parser(compiler_t *comp, ln_parser_t *prs, uint32_t *out_pc)
 	if (pc == UINT32_MAX) return -1;
 	*out_pc = pc;
 
-	/* %.:json% or %:cef% with a rewrite= table. aux 0 keeps every key. */
+	/* %.:json%, %:cef% or %:name-value-list% with a rewrite= table.
+	 * aux 0 keeps every key. */
 	if ((op == OP_FIELD_JSON && fname[0] == '.' && fname[1] == '\0')
-	    || op == OP_CEF_HDR)
+	    || op == OP_CEF_HDR || op == OP_FIELD_NAME_VALUE)
 		comp->turbo->code[pc].aux =
 			(uint16_t)ln_rewrite_id_for_parser(prs);
 

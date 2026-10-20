@@ -1353,9 +1353,10 @@ There can be multiple annotations for the same tag.
 JSON key rewrite
 ----------------
 
-``rewrite=`` renames keys of an inlined JSON object (``%.:json%``) and
-keys of a CEF extension list (``%:cef%``) as those keys are stored. It
-does not add a constant. It is not applied to a named ``%field:json%``
+``rewrite=`` renames keys of an inlined JSON object (``%.:json%``),
+keys of a CEF extension list (``%:cef%``) and names of a name-value
+list (``%:name-value-list%``) as those keys are stored. It does not add
+a constant. It is not applied to a named ``%field:json%``
 value, to the six CEF header fields, or to fields the rule parses
 itself. ``annotate=`` is unchanged.
 
@@ -1373,14 +1374,15 @@ for every dotted field name. The values are the same on both.
 
 The tag is any tag ``rule=`` accepts that contains no whitespace
 (``cisco-asa`` works). A name is at most 511 bytes. It may contain
-letters, digits, ``_``, ``.`` and ``@``. Space around ``:`` and ``=``
-is permitted. A ``#`` starts a comment and the rest of the line is
+letters, digits, ``_``, ``.``, ``@`` and ``-``. Space around ``:`` and
+``=`` is permitted. A ``#`` starts a comment and the rest of the line is
 ignored. Giving one source key two destinations is rejected, for the
 same tag and across the tags of one rule (``rule=a,b:``). Repeating
 the same mapping is ignored.
 
-The tag has to sit on one rule whose ``%.:json%`` or ``%:cef%`` parser
-is not shared with a longer rule. Otherwise the rulebase is rejected.
+The tag has to sit on one rule whose ``%.:json%``, ``%:cef%`` or
+``%:name-value-list%`` parser is not shared with a longer rule.
+Otherwise the rulebase is rejected.
 
 ::
 
@@ -1394,6 +1396,10 @@ is not shared with a longer rule. Otherwise the rulebase is rejected.
     rewrite=cef:src=source.ip
     rewrite=cef:proto=network.transport|lower
     rule=cef:%.:cef%
+
+    rewrite=kv:src=source.ip
+    rewrite=kv:proto=network.transport|lower
+    rule=kv:%.:name-value-list%
 
 Examples
 --------
